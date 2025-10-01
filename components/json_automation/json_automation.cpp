@@ -263,54 +263,50 @@ Trigger<> *JsonAutomationComponent::create_trigger(const AutomationRule &rule) {
   return nullptr;
 }
 
-Action<> *JsonAutomationComponent::create_action(const std::string &action_str, const AutomationRule &rule) {
-  size_t colon_pos = action_str.find(':');
-  if (colon_pos == std::string::npos) {
-    ESP_LOGW(TAG, "Invalid action format: %s", action_str.c_str());
-    return nullptr;
+esphome::Action<> *JsonAutomationComponent::create_action(const Action &action) {
+  if (action.source == ActionSource::SWITCH) {
+    if (action.switch_id.empty()) {
+      ESP_LOGW(TAG, "Missing switch_id for switch action");
+      return nullptr;
+    }
+
+    auto *sw = this->resolve_switch(action.switch_id);
+    if (!sw) return nullptr;
+
+    if (action.type == ActionType::TURN_ON) {
+      return new switch_::TurnOnAction<>(sw);
+    } else if (action.type == ActionType::TURN_OFF) {
+      return new switch_::TurnOffAction<>(sw);
+    } else if (action.type == ActionType::TOGGLE) {
+      return new switch_::ToggleAction<>(sw);
+    }
+  } else if (action.source == ActionSource::LIGHT) {
+    if (action.switch_id.empty()) {
+      ESP_LOGW(TAG, "Missing switch_id for light action");
+      return nullptr;
+    }
+
+    auto *light = this->resolve_light(action.switch_id);
+    if (!light) return nullptr;
+
+    if (action.type == ActionType::TURN_ON) {
+      auto *light_action = new light::LightControlAction<>(light);
+      light_action->set_state(true);
+      return light_action;
+    } else if (action.type == ActionType::TURN_OFF) {
+      auto *light_action = new light::LightControlAction<>(light);
+      light_action->set_state(false);
+      return light_action;
+    } else if (action.type == ActionType::TOGGLE) {
+      return new light::ToggleAction<>(light);
+    }
+  } else if (action.source == ActionSource::DELAY) {
+    auto *delay_action = new esphome::DelayAction<>();
+    delay_action->set_delay(action.delay_s * 1000);
+    return delay_action;
   }
 
-  std::string action_type = action_str.substr(0, colon_pos);
-  std::string object_id = action_str.substr(colon_pos + 1);
-
-  object_id.erase(0, object_id.find_first_not_of(" \t"));
-  object_id.erase(object_id.find_last_not_of(" \t") + 1);
-
-  if (action_type == "switch.turn_on") {
-    auto *sw = this->resolve_switch(object_id);
-    if (!sw) return nullptr;
-    auto *action = new switch_::TurnOnAction<>(sw);
-    return action;
-  } else if (action_type == "switch.turn_off") {
-    auto *sw = this->resolve_switch(object_id);
-    if (!sw) return nullptr;
-    auto *action = new switch_::TurnOffAction<>(sw);
-    return action;
-  } else if (action_type == "switch.toggle") {
-    auto *sw = this->resolve_switch(object_id);
-    if (!sw) return nullptr;
-    auto *action = new switch_::ToggleAction<>(sw);
-    return action;
-  } else if (action_type == "light.turn_on") {
-    auto *light = this->resolve_light(object_id);
-    if (!light) return nullptr;
-    auto *action = new light::LightControlAction<>(light);
-    action->set_state(true);
-    return action;
-  } else if (action_type == "light.turn_off") {
-    auto *light = this->resolve_light(object_id);
-    if (!light) return nullptr;
-    auto *action = new light::LightControlAction<>(light);
-    action->set_state(false);
-    return action;
-  } else if (action_type == "light.toggle") {
-    auto *light = this->resolve_light(object_id);
-    if (!light) return nullptr;
-    auto *action = new light::ToggleAction<>(light);
-    return action;
-  }
-
-  ESP_LOGW(TAG, "Unsupported action type: %s", action_type.c_str());
+  ESP_LOGW(TAG, "Unsupported action configuration");
   return nullptr;
 }
 
@@ -328,7 +324,12 @@ void JsonAutomationComponent::create_all_automations() {
 }
 
 bool JsonAutomationComponent::create_automation_from_rule(const AutomationRule &rule) {
-  ESP_LOGD(TAG, "Creating automation: %s", rule.id.c_str());
+  ESP_LOGD(TAG, "Creating automation: %s (%s)", rule.id.c_str(), rule.name.c_str());
+
+  if (!rule.enabled) {
+    ESP_LOGD(TAG, "Automation %s is disabled, skipping", rule.id.c_str());
+    return true;
+  }
 
   Trigger<> *trigger = this->create_trigger(rule);
   if (!trigger) {
@@ -339,10 +340,10 @@ bool JsonAutomationComponent::create_automation_from_rule(const AutomationRule &
   Automation<> *automation = new Automation<>(trigger);
 
   int action_count = 0;
-  for (const auto &action_str : rule.actions) {
-    Action<> *action = this->create_action(action_str, rule);
-    if (action) {
-      automation->add_action(action);
+  for (const auto &action : rule.actions) {
+    esphome::Action<> *action_obj = this->create_action(action);
+    if (action_obj) {
+      automation->add_action(action_obj);
       action_count++;
     }
   }
@@ -360,14 +361,11 @@ void JsonAutomationComponent::execute_automation(const std::string &automation_i
 
   for (const auto &automation : this->automations_) {
     if (automation.id == automation_id) {
-      ESP_LOGI(TAG, "Found automation %s with %d actions",
-               automation_id.c_str(), automation.actions.size());
+      ESP_LOGI(TAG, "Found automation %s (%s) with %d actions",
+               automation_id.c_str(), automation.name.c_str(), automation.actions.size());
 
       ESP_LOGI(TAG, "Automation is active and will execute when triggered");
-
-      for (const auto &action : automation.actions) {
-        ESP_LOGD(TAG, "Action in automation: %s", action.c_str());
-      }
+      ESP_LOGI(TAG, "Enabled: %s", automation.enabled ? "YES" : "NO");
 
       return;
     }
