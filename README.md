@@ -1,21 +1,28 @@
 # ESPHome JSON Automation Component
 
-An ESPHome external component that stores and parses JSON automation definitions with persistent flash storage. This component provides a structured way to store automation metadata that can be accessed via callbacks for custom logic implementation.
+An ESPHome external component that creates **real, executable ESPHome automations at runtime** by parsing JSON automation definitions stored in flash preferences. The component dynamically instantiates ESPHome trigger and action classes, resolves entities by their object IDs, and wires them together into functioning automations.
 
 ## Features
 
-- **JSON-based automation storage**: Store automation definitions using JSON format
-- **Persistent storage**: Save JSON configurations to flash memory (survives reboots, max 4KB)
-- **Dynamic JSON loading**: Load and parse JSON at runtime or from preferences
-- **Trigger callbacks**: Get notified when automations are loaded or errors occur
-- **Automation lookup**: Query parsed automation data by ID
-- **Structured metadata**: Store triggers, actions, and parameters in a queryable format
+- **Dynamic automation creation**: Creates real ESPHome `Automation<>` objects at runtime from JSON
+- **Entity resolution**: Resolves binary sensors, switches, and lights using ESPHome's object ID registry
+- **Real trigger classes**: Instantiates `PressTrigger`, `ReleaseTrigger` from JSON definitions
+- **Real action classes**: Creates `TurnOnAction`, `TurnOffAction`, `ToggleAction` for switches and lights
+- **Persistent storage**: Saves JSON configurations to flash memory (survives reboots, max 4KB)
+- **Runtime updates**: Load new JSON and recreate all automations on-the-fly
+- **Safe memory management**: Uses `unique_ptr` for proper lifecycle management
 
-## Important Limitations
+## How It Works
 
-**This component does NOT execute ESPHome actions dynamically.** It stores and parses JSON automation definitions and provides callbacks with the parsed data. To use the parsed automations, you must implement custom logic in the `on_automation_loaded` callback.
+Unlike typical ESPHome automations that are defined at compile time, this component:
 
-ESPHome automations are compile-time constructs. This component is designed for storing automation metadata that your custom code can act upon.
+1. **Parses JSON** automation definitions at runtime
+2. **Resolves entities** using `fnv1_hash(object_id)` and `App.get_*_by_key()`
+3. **Creates trigger objects** (e.g., `binary_sensor::PressTrigger`)
+4. **Creates action objects** (e.g., `light::TurnOnAction`)
+5. **Wires them together** into `Automation<>` objects that execute when triggers fire
+
+The automations function exactly like compile-time ESPHome automations, but are created dynamically from JSON stored in flash.
 
 ## Installation
 
@@ -47,22 +54,37 @@ external_components:
 preferences:
   flash_write_interval: 5min
 
+binary_sensor:
+  - platform: gpio
+    id: button
+    pin: GPIO0
+
+switch:
+  - platform: gpio
+    id: fan
+    pin: GPIO12
+
+light:
+  - platform: binary
+    id: bedroom_light
+    output: light_output
+
 json_automation:
   id: my_automations
   json_data: |
     {
       "automations": [
         {
-          "id": "example_automation",
+          "id": "button_press_light",
           "trigger": {
             "type": "binary_sensor",
             "condition": "on_press",
             "parameters": {
-              "sensor_id": "my_button"
+              "object_id": "button"
             }
           },
           "actions": [
-            "light.turn_on: my_light"
+            "light.turn_on: bedroom_light"
           ]
         }
       ]
@@ -77,12 +99,12 @@ json_automation:
   on_automation_loaded:
     then:
       - logger.log: 
-          format: "Loaded automations: %s"
+          format: "Created %d automations from JSON"
           args: ['data.c_str()']
   on_json_error:
     then:
       - logger.log:
-          format: "Error: %s"
+          format: "JSON Error: %s"
           args: ['error.c_str()']
           level: ERROR
 ```
@@ -97,60 +119,58 @@ json_automation:
     {
       "id": "unique_automation_id",
       "trigger": {
-        "type": "trigger_type",
-        "condition": "trigger_condition",
+        "type": "binary_sensor",
+        "condition": "on_press",
         "parameters": {
-          "key": "value"
+          "object_id": "button_object_id"
         }
       },
       "actions": [
-        "simple_action_string",
-        {
-          "type": "action_type",
-          "parameter": "value"
-        }
+        "switch.turn_on: fan_object_id",
+        "light.toggle: light_object_id"
       ]
     }
   ]
 }
 ```
 
-### Supported Trigger Types
+## Supported Features
 
-- **binary_sensor**: For button presses, motion sensors, etc.
-  - Conditions: `on_press`, `on_release`, `on_state`
-  
-- **sensor**: For temperature, humidity, and other numeric sensors
-  - Conditions: `on_value`, `on_value_range`
-  
-- **time**: For scheduled automations
-  - Conditions: `on_time`, `cron`
+### Trigger Types
 
-### Action Examples
+Currently supported:
+
+- **binary_sensor**
+  - `on_press`: Creates `binary_sensor::PressTrigger`
+  - `on_release`: Creates `binary_sensor::ReleaseTrigger`
+
+### Action Types
+
+Currently supported:
+
+- **Switch actions**: `switch.turn_on`, `switch.turn_off`, `switch.toggle`
+- **Light actions**: `light.turn_on`, `light.turn_off`, `light.toggle`
+
+### Entity Resolution
+
+Entities are resolved by their `object_id` using ESPHome's hash-based registry:
 
 ```json
-"actions": [
-  "light.turn_on: living_room",
-  "switch.toggle: fan",
-  {
-    "type": "delay",
-    "duration": "5min"
-  },
-  {
-    "type": "homeassistant.service",
-    "service": "notify.mobile_app",
-    "data": {
-      "message": "Automation triggered!"
-    }
-  }
-]
+"parameters": {
+  "object_id": "my_button"
+}
 ```
+
+The component:
+1. Calculates `fnv1_hash("my_button")`
+2. Looks up the entity using `App.get_binary_sensor_by_key(hash)`
+3. Uses the resolved entity to create the trigger/action
 
 ## Actions (YAML)
 
 ### Load JSON
 
-Load new JSON automation configuration:
+Load new JSON and recreate all automations:
 
 ```yaml
 button:
@@ -161,142 +181,147 @@ button:
           id: my_automations
           json_data: |
             {
-              "automations": [...]
+              "automations": [
+                {
+                  "id": "new_automation",
+                  "trigger": {
+                    "type": "binary_sensor",
+                    "condition": "on_press",
+                    "parameters": {
+                      "object_id": "button"
+                    }
+                  },
+                  "actions": [
+                    "switch.toggle: fan"
+                  ]
+                }
+              ]
             }
 ```
 
+This will:
+1. Clear all existing automations
+2. Parse the new JSON
+3. Create new automation objects
+4. Wire them to triggers and actions
+
 ### Save JSON
 
-Save current configuration to preferences:
+Save current configuration to flash preferences:
 
 ```yaml
 - json_automation.save_json:
     id: my_automations
 ```
 
-### Execute Automation (Lookup Only)
-
-Look up a specific automation by ID (logs automation details, does not execute actions):
-
-```yaml
-- json_automation.execute:
-    id: my_automations
-    automation_id: "morning_routine"
-```
-
-**Note**: This action only looks up and logs the automation. It does not execute ESPHome actions. Use `on_automation_loaded` callbacks to implement custom logic based on the parsed data.
-
 ## Complete Examples
 
-### Storing Automation Metadata
-
-This example shows how to store automation definitions. The component parses and stores this data, which you can then use in callbacks:
+### Button Controls Light and Fan
 
 ```json
 {
   "automations": [
     {
-      "id": "morning_routine",
-      "trigger": {
-        "type": "time",
-        "condition": "on_time",
-        "parameters": {
-          "hour": "7",
-          "minute": "0"
-        }
-      },
-      "actions": [
-        "light.turn_on: bedroom_light",
-        "switch.turn_on: coffee_maker"
-      ]
-    }
-  ]
-}
-```
-
-### Using Parsed Data in Callbacks
-
-To actually use the parsed automation data, implement logic in callbacks:
-
-```yaml
-json_automation:
-  id: my_automations
-  json_data: '{"automations": [...]}'
-  on_automation_loaded:
-    then:
-      - lambda: |-
-          // Access parsed automations
-          auto automations = id(my_automations).get_automations();
-          for (const auto &automation : automations) {
-            ESP_LOGI("main", "Loaded: %s", automation.id.c_str());
-            ESP_LOGI("main", "  Trigger: %s", automation.trigger_type.c_str());
-            
-            // Implement your custom logic here based on the automation data
-            if (automation.id == "morning_routine") {
-              // Do something with this automation's data
-            }
-          }
-```
-
-### Metadata for External System Integration
-
-Store automation configurations that external systems (like Home Assistant) can read:
-
-```json
-{
-  "automations": [
-    {
-      "id": "security_motion",
+      "id": "button_press_light",
       "trigger": {
         "type": "binary_sensor",
         "condition": "on_press",
         "parameters": {
-          "sensor_id": "outdoor_motion"
+          "object_id": "button"
         }
       },
       "actions": [
-        "notify: Motion detected outdoors"
+        "light.turn_on: bedroom_light"
+      ]
+    },
+    {
+      "id": "button_release_light",
+      "trigger": {
+        "type": "binary_sensor",
+        "condition": "on_release",
+        "parameters": {
+          "object_id": "button"
+        }
+      },
+      "actions": [
+        "light.turn_off: bedroom_light",
+        "switch.toggle: fan"
       ]
     }
   ]
 }
 ```
 
-## Component API
-
-### C++ Methods
-
-```cpp
-void set_json_data(const std::string &json_data);
-bool load_json_from_preferences();
-bool save_json_to_preferences();
-bool parse_json_automations(const std::string &json_data);
-void execute_automation(const std::string &automation_id);  // Lookup only, does not execute
-const std::vector<AutomationRule> &get_automations() const;  // Access parsed data
-```
-
-### Callbacks
-
-- `on_automation_loaded`: Triggered when JSON is successfully parsed (provides parsed data)
-- `on_json_error`: Triggered when JSON parsing fails (provides error message)
-
-### Use Case: Custom Logic Implementation
-
-Access the parsed automation data in your lambdas:
+### Required YAML Configuration
 
 ```yaml
-lambda: |-
-  auto automations = id(my_automations).get_automations();
-  // Process automation metadata as needed
+esphome:
+  name: json-automation-example
+
+esp32:
+  board: esp32dev
+
+logger:
+  level: DEBUG
+
+api:
+  encryption:
+    key: "your-encryption-key"
+
+ota:
+  - platform: esphome
+    password: "your-ota-password"
+
+wifi:
+  ssid: "your-ssid"
+  password: "your-password"
+
+preferences:
+  flash_write_interval: 5min
+
+external_components:
+  - source:
+      type: local
+      path: components
+
+binary_sensor:
+  - platform: gpio
+    id: button
+    pin: 
+      number: GPIO0
+      inverted: true
+      mode: INPUT_PULLUP
+
+switch:
+  - platform: gpio
+    id: fan
+    pin: GPIO12
+
+output:
+  - platform: gpio
+    id: light_output
+    pin: GPIO13
+
+light:
+  - platform: binary
+    id: bedroom_light
+    output: light_output
+
+json_automation:
+  id: my_automations
+  json_data: |
+    {
+      "automations": [...]
+    }
 ```
 
 ## Flash Memory Considerations
 
-The component uses ESPHome's preferences system to store JSON in flash memory. Consider:
+The component uses ESPHome's preferences system to store JSON in flash memory:
 
 - **Write cycles**: Flash memory has limited write cycles (~100,000)
 - **Write interval**: Configure `flash_write_interval` appropriately (default: 1min)
-- **Data size**: JSON is limited to 4KB maximum. Both parsing and saving enforce this limit
+- **Data size**: JSON is limited to 4KB maximum to protect flash memory
 
 ```yaml
 preferences:
@@ -317,25 +342,91 @@ This validates:
 - Example YAML configuration
 - Example JSON structure
 
+## Technical Details
+
+### Runtime Automation Creation
+
+The component creates real ESPHome automation objects at runtime:
+
+```cpp
+// Simplified pseudo-code of what happens internally
+auto *trigger = new binary_sensor::PressTrigger(sensor);
+auto *action = new light::TurnOnAction<>(light);
+auto *automation = new Automation<>(trigger);
+automation->add_action(action);
+```
+
+### Entity Resolution
+
+Entities are resolved using ESPHome's object ID hashing:
+
+```cpp
+uint32_t hash = esphome::fnv1_hash(object_id);
+auto *sensor = App.get_binary_sensor_by_key(hash);
+```
+
+### Memory Management
+
+The component uses `unique_ptr` for safe memory management:
+
+```cpp
+std::vector<std::unique_ptr<Automation<>>> automation_objects_;
+```
+
+When `clear_automations()` is called, the vector is cleared and all automations are properly destroyed.
+
+### Setup Priority
+
+The component uses `LATE` setup priority to ensure all entities are registered before attempting resolution:
+
+```cpp
+float get_setup_priority() const override { 
+  return setup_priority::LATE; 
+}
+```
+
+## Limitations
+
+### Current Restrictions
+
+- **Triggers**: Only `binary_sensor` triggers (`on_press`, `on_release`)
+- **Actions**: Only string-based actions (switch/light control)
+- **No object actions**: Delay, lambdas, and complex actions not supported
+- **No parameters**: Actions don't support additional parameters (brightness, color, etc.)
+
+These limitations keep the implementation simple and avoid template complexity. Future versions may expand support.
+
+### Why These Limitations?
+
+ESPHome uses heavy template metaprogramming. Creating templated objects at runtime requires knowing types at compile time. The current implementation focuses on:
+
+1. **Non-templated triggers**: `Trigger<>` (binary sensor state changes)
+2. **Non-templated actions**: `Action<>` (simple on/off/toggle)
+3. **Simple actions**: Avoiding lambdas and complex parameter passing
+
+This provides a working dynamic automation system while keeping the code maintainable.
+
 ## Troubleshooting
+
+### Automation Not Executing
+
+1. **Check entity resolution**: Ensure `object_id` matches exactly (case-sensitive)
+2. **Enable debug logging**: Set `logger: level: DEBUG`
+3. **Check logs for errors**: Look for "Failed to resolve" messages
+4. **Verify entities exist**: Ensure binary sensors/switches/lights are defined
 
 ### JSON Not Loading
 
 - Check JSON syntax with a validator
-- Enable debug logging: `logger: level: DEBUG`
 - Verify the `automations` array exists in JSON
+- Check for size limit (4KB maximum)
+- Look for parsing errors in logs
 
-### Preferences Not Saving
+### Compile Errors
 
-- Ensure `preferences:` component is configured
-- Check flash_write_interval setting
-- Monitor flash writes to avoid wear
-
-### Component Not Found
-
-- Verify `external_components` path is correct
-- Ensure `components` folder contains `json_automation` directory
-- Check ESPHome compilation logs
+- Ensure ESPHome version is recent (tested with 2024.x)
+- Check that all referenced entities are defined
+- Verify external component path is correct
 
 ## Development
 
@@ -343,14 +434,37 @@ This validates:
 
 ```
 components/json_automation/
-├── __init__.py              # Python config validation
-├── json_automation.h        # C++ header
-└── json_automation.cpp      # C++ implementation
+├── __init__.py              # Python config validation & code generation
+├── json_automation.h        # C++ header with class definition
+└── json_automation.cpp      # C++ implementation with factories
 
 example.yaml                 # Example ESPHome config
 example_automation.json      # Example JSON automations
 validate_component.py        # Component validator
 ```
+
+### How It Works Internally
+
+1. **Compile time** (`__init__.py`): 
+   - Validates YAML configuration
+   - Generates C++ code registration
+
+2. **Boot time** (`setup()`):
+   - Loads JSON from preferences or uses provided json_data
+   - Parses JSON to extract automation definitions
+   - Calls `create_all_automations()` to build runtime objects
+
+3. **Runtime** (`create_all_automations()`):
+   - Iterates through parsed automation rules
+   - Creates trigger objects via `create_trigger_from_rule()`
+   - Creates action objects via `create_action_from_string()`
+   - Wires triggers and actions into `Automation<>` objects
+   - Stores automations in `automation_objects_` vector
+
+4. **Update time** (`LoadJsonAction`):
+   - Calls `clear_automations()` to destroy old objects
+   - Parses new JSON
+   - Creates new automation objects
 
 ### Building
 

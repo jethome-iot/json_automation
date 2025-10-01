@@ -2,9 +2,9 @@
 
 ## Overview
 
-This is an ESPHome external component that enables storing and parsing JSON-based automation definitions with persistent flash storage. The component acts as a metadata storage layer for automation configurations, allowing runtime loading and parsing of automation definitions stored in JSON format. 
+This is an ESPHome external component that **dynamically creates and executes real ESPHome automations at runtime** by parsing JSON automation definitions stored in flash preferences. Unlike typical ESPHome automations that are compile-time constructs, this component creates actual ESPHome trigger and action class instances at runtime, resolves entities by their object IDs, and wires them together into functioning automations.
 
-**Critical Design Note:** This component does NOT execute ESPHome actions dynamically. It only stores, parses, and provides callbacks with automation metadata. ESPHome automations are compile-time constructs, so this component is designed for storing automation metadata that custom code can interpret and act upon.
+**Critical Design:** This component creates real `Automation<>` objects with real `PressTrigger`, `TurnOnAction`, etc. The automations execute exactly like compile-time ESPHome automations, but are defined in JSON and created dynamically.
 
 ## User Preferences
 
@@ -17,81 +17,154 @@ Preferred communication style: Simple, everyday language.
 **ESPHome External Component Pattern**: The project follows ESPHome's external component architecture with a dual Python/C++ implementation:
 
 - **Python Configuration Layer** (`__init__.py`): Handles YAML schema validation and code generation during ESPHome compilation
-- **C++ Runtime Layer** (`json_automation.h` and `json_automation.cpp`): Implements the actual component logic that runs on the ESP device
+- **C++ Runtime Layer** (`json_automation.h` and `json_automation.cpp`): Implements runtime automation creation using real ESPHome classes
 
-This separation allows ESPHome to validate configurations at compile time while keeping the runtime footprint minimal on resource-constrained ESP devices.
+### Dynamic Automation Creation
+
+**Runtime Class Instantiation**: The component creates real ESPHome automation objects at runtime:
+
+1. **Entity Resolution**: Uses `esphome::fnv1_hash(object_id)` to calculate entity keys, then resolves using `App.get_*_by_key(hash)`
+2. **Trigger Factory**: Creates actual trigger objects (`binary_sensor::PressTrigger`, `binary_sensor::ReleaseTrigger`)
+3. **Action Factory**: Creates actual action objects (`light::TurnOnAction`, `switch::ToggleAction`, etc.)
+4. **Automation Wiring**: Uses ESPHome's `Automation<>` class to connect triggers to actions
+
+### Memory Management Strategy
+
+**Safe Ownership Model**: Uses `std::unique_ptr` for automatic resource management:
+
+- **Single storage vector**: `std::vector<std::unique_ptr<Automation<>>> automation_objects_`
+- **Automation owns everything**: Each `Automation<>` object owns its trigger and actions
+- **Clear operation**: `clear_automations()` clears the vector, triggering proper destruction chain
+- **No dangling pointers**: RAII ensures all resources are cleaned up correctly
 
 ### Data Storage Strategy
 
-**Persistent Flash Storage**: Automation definitions are stored in ESP flash memory (4KB maximum enforced) using ESPHome's preferences system, allowing configurations to survive device reboots. The storage mechanism uses:
+**Persistent Flash Storage**: Automation definitions are stored in ESP flash memory (4KB maximum enforced) using ESPHome's preferences system:
 
 - `flash_write_interval`: Configurable write batching to minimize flash wear
 - JSON format for human-readable and parseable storage
-- Runtime JSON parsing capability for dynamic configuration loading
-- Size validation on both parse and save operations to prevent flash issues
+- Runtime JSON parsing using ArduinoJson via ESPHome's utilities
+- Size validation on both parse and save operations
 
 ### Event-Driven Architecture
 
-**Trigger-Based Notification System**: The component uses ESPHome's automation/trigger framework to notify other components when events occur:
+**Trigger-Based Notification System**: Uses ESPHome's automation/trigger framework for event notification:
 
-- `AutomationLoadedTrigger`: Fires when automation JSON is successfully parsed, passing the automation data as a string
-- `JsonErrorTrigger`: Fires when JSON parsing or loading fails, passing error messages
-
-This allows other custom components or ESPHome automations to react to configuration changes or errors without tight coupling.
+- `AutomationLoadedTrigger`: Fires when JSON is parsed, passing automation count
+- `JsonErrorTrigger`: Fires when JSON parsing fails, passing error messages
 
 ### Action Framework
 
 **Three Core Actions**:
-- `LoadJsonAction`: Loads JSON from a source (runtime or flash) and triggers parsing
+- `LoadJsonAction`: Loads JSON, clears existing automations, parses, and creates new automation objects
 - `SaveJsonAction`: Persists JSON automation definitions to flash storage
-- `ExecuteAutomationAction`: Provides a hook for custom code to interpret and act on parsed automation metadata
+- `ExecuteAutomationAction`: Looks up automation by ID and logs details (for debugging)
 
-These actions integrate with ESPHome's automation system, enabling YAML-defined workflows to manage JSON configurations.
+### Supported Features (Current Implementation)
 
-### Automation Metadata Model
+**Triggers:**
+- Binary sensor: `on_press`, `on_release`
 
-**Structured JSON Schema**: Automations are defined using a structured format containing:
+**Actions:**
+- Switch: `turn_on`, `turn_off`, `toggle`
+- Light: `turn_on`, `turn_off`, `toggle`
 
-- **id**: Unique identifier for automation lookup
-- **trigger**: Defines when the automation should conceptually activate (type, condition, parameters)
-- **actions**: Array of action definitions with types and parameters
+**Entity Types:**
+- Binary sensors (buttons, motion sensors, etc.)
+- Switches (relays, plugs, etc.)
+- Lights (binary lights, PWM lights, etc.)
 
-Example structure supports time-based triggers, sensor triggers, and various action types including delays, service calls, and device control commands. The component parses this structure but delegates execution logic to implementing code.
+### Design Limitations
 
-### Component Registration
+**Intentional Restrictions** to avoid template complexity:
 
-**ESPHome Component Lifecycle**: Uses standard ESPHome component registration (`cg.register_component`) to integrate with the device's setup/loop cycle, allowing the component to initialize during device boot and participate in the standard ESPHome component lifecycle.
+- Only `Trigger<>` template (binary sensor state changes)
+- Only `Action<>` template (simple actions without parameters)
+- No object-style actions (delay, lambda, etc.)
+- No sensor triggers (would require `Trigger<float>` template)
+- No action parameters (brightness, color, etc.)
+
+These restrictions keep the runtime type system simple while providing useful automation capabilities.
+
+### Component Lifecycle
+
+**ESPHome Integration**:
+
+1. **Setup Priority LATE**: Ensures all entities are registered before automation creation
+2. **Boot Sequence**:
+   - Load JSON from preferences or use provided `json_data`
+   - Parse JSON to extract automation rules
+   - Resolve entities by object_id using fnv1_hash
+   - Create trigger and action objects
+   - Wire them into Automation<> objects
+3. **Runtime Updates**: LoadJsonAction clears and recreates all automations from new JSON
 
 ## External Dependencies
 
 ### ESPHome Framework
 
-- **esphome.codegen**: Code generation utilities for C++ code emission during compilation
-- **esphome.config_validation**: YAML schema validation framework
-- **esphome.automation**: Trigger and action base classes for event handling
-- **esphome.const**: Standard constant definitions (CONF_ID, CONF_TRIGGER_ID)
+- **esphome.codegen**: Code generation utilities for C++ emission
+- **esphome.config_validation**: YAML schema validation
+- **esphome.automation**: Trigger, Action, and Automation base classes
+- **esphome.const**: Standard constant definitions
+- **esphome.components.binary_sensor**: PressTrigger, ReleaseTrigger classes
+- **esphome.components.switch**: TurnOnAction, TurnOffAction, ToggleAction
+- **esphome.components.light**: TurnOnAction, TurnOffAction, ToggleAction
 
 ### ESP Platform
 
-- **Flash Storage**: Utilizes ESP device flash memory via ESPHome preferences API
-- **JSON Parsing**: Uses ArduinoJson library via ESPHome's json::parse_json utility
+- **Flash Storage**: ESPHome preferences API for persistent storage
+- **JSON Parsing**: ArduinoJson via ESPHome's json::parse_json
+- **Entity Registry**: App singleton for entity lookup by hash
 
 ### Build System
 
-- **Python 3**: Validation script and component configuration written in Python 3
-- **ESPHome Compiler**: Required to compile YAML configurations into C++ firmware
-
-No external web services, databases, or third-party APIs are required. The component operates entirely on-device.
+- **Python 3**: Configuration validation and code generation
+- **ESPHome Compiler**: Compiles YAML to C++ firmware
+- **C++11 or later**: For unique_ptr and modern C++ features
 
 ## Recent Changes
 
-### October 2025 - Component Implementation Complete
+### October 2025 - Dynamic Automation Implementation Complete
 
-- **Fixed compile-time issues**: Corrected Python-to-C++ action code generation to match constructor signatures
-- **Added size validation**: Enforced 4KB maximum JSON size on both parse and save operations to prevent flash issues
-- **Clarified execution model**: Updated documentation and code to clearly indicate component stores/parses metadata only, does not execute actions dynamically
-- **Validation tooling**: Created `validate_component.py` script to verify component structure and syntax
-- **Example configurations**: Added `example.yaml` and `example_automation.json` to demonstrate usage patterns
-- **Complete documentation**: Created comprehensive README.md with accurate capability descriptions and usage examples
+**Final Working Implementation:**
 
-The component is now production-ready for its stated purpose: storing and parsing JSON automation metadata with persistent flash storage and callback-based custom logic integration.
+- **Ownership fixed**: Removed separate trigger/action storage, only `automation_objects_` vector remains
+- **Template alignment**: Removed sensor support, only binary_sensor triggers (Trigger<>) are used
+- **Compile errors resolved**: Removed non-existent `binary_sensor::StateTrigger`, kept only `PressTrigger` and `ReleaseTrigger`
+- **Entity resolution**: Uses `esphome::fnv1_hash()` and `App.get_*_by_key()` pattern
+- **Safe destruction**: clear_automations() properly destroys all automation objects
+- **Runtime updates**: LoadJsonAction clears and recreates automations from new JSON
+- **Parameter validation**: Added validation for required object_id parameter
+- **Examples updated**: JSON and YAML examples demonstrate working button→light/switch automations
+
+**Architect Approval**: Received "Pass" verdict - component compiles, executes correctly, and safely manages memory.
+
+The component is now production-ready for creating runtime automations from JSON with persistent flash storage.
+
+## Project Status
+
+**Current State**: Complete and approved by architect. The component:
+
+✅ Creates real ESPHome automations at runtime from JSON  
+✅ Resolves entities using ESPHome's object ID registry  
+✅ Uses actual trigger classes (PressTrigger, ReleaseTrigger)  
+✅ Uses actual action classes (TurnOnAction, TurnOffAction, ToggleAction)  
+✅ Safely manages memory with unique_ptr ownership  
+✅ Supports runtime JSON updates with clear/recreate cycle  
+✅ Stores configurations in flash (4KB max, survives reboots)  
+✅ Validates and compiles without errors  
+✅ Ready for real-world ESPHome deployment  
+
+## Files
+
+**Core Implementation:**
+- `components/json_automation/__init__.py` - Python config validation & code generation
+- `components/json_automation/json_automation.h` - C++ header with class definitions
+- `components/json_automation/json_automation.cpp` - C++ implementation with trigger/action factories
+
+**Examples & Validation:**
+- `example.yaml` - Working ESPHome configuration example
+- `example_automation.json` - Example JSON automation definitions
+- `validate_component.py` - Component structure validator
+- `README.md` - Complete documentation with technical details
