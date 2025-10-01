@@ -260,12 +260,14 @@ Action<> *JsonAutomationComponent::create_action(const std::string &action_str, 
   } else if (action_type == "light.turn_on") {
     auto *light = this->resolve_light(object_id);
     if (!light) return nullptr;
-    auto *action = new light::TurnOnAction<>(light);
+    auto *action = new light::LightControlAction<>(light);
+    action->state_.set_value(true);
     return action;
   } else if (action_type == "light.turn_off") {
     auto *light = this->resolve_light(object_id);
     if (!light) return nullptr;
-    auto *action = new light::TurnOffAction<>(light);
+    auto *action = new light::LightControlAction<>(light);
+    action->state_.set_value(false);
     return action;
   } else if (action_type == "light.toggle") {
     auto *light = this->resolve_light(object_id);
