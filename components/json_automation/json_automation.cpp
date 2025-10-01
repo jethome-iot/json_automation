@@ -36,9 +36,9 @@ void JsonAutomationComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "  Active automation objects: %d", this->automation_objects_.size());
 
   for (const auto &automation : this->automations_) {
-    ESP_LOGCONFIG(TAG, "  Automation ID: %s", automation.id.c_str());
-    ESP_LOGCONFIG(TAG, "    Trigger: %s (%s)", automation.trigger_type.c_str(),
-                  automation.trigger_condition.c_str());
+    ESP_LOGCONFIG(TAG, "  Automation: %s (%s)", automation.id.c_str(), automation.name.c_str());
+    ESP_LOGCONFIG(TAG, "    Enabled: %s", automation.enabled ? "YES" : "NO");
+    ESP_LOGCONFIG(TAG, "    Trigger: input_id=%s", automation.trigger.input_id.c_str());
     ESP_LOGCONFIG(TAG, "    Actions: %d", automation.actions.size());
   }
 }
@@ -240,27 +240,26 @@ light::LightState *JsonAutomationComponent::resolve_light(const std::string &obj
 }
 
 Trigger<> *JsonAutomationComponent::create_trigger(const AutomationRule &rule) {
-  if (rule.trigger_type == "binary_sensor") {
-    if (rule.parameters.count("object_id") == 0) {
-      ESP_LOGE(TAG, "Missing object_id parameter for binary_sensor trigger");
+  if (rule.trigger.source == TriggerSource::INPUT) {
+    if (rule.trigger.input_id.empty()) {
+      ESP_LOGE(TAG, "Missing input_id for Input trigger");
       return nullptr;
     }
 
-    auto object_id = rule.parameters.at("object_id");
-    auto *sensor = this->resolve_binary_sensor(object_id);
+    auto *sensor = this->resolve_binary_sensor(rule.trigger.input_id);
     if (!sensor) return nullptr;
 
-    if (rule.trigger_condition == "on_press") {
+    if (rule.trigger.type == TriggerType::PRESS) {
       auto *trigger = new binary_sensor::PressTrigger(sensor);
       return trigger;
-    } else if (rule.trigger_condition == "on_release") {
+    } else if (rule.trigger.type == TriggerType::RELEASE) {
       auto *trigger = new binary_sensor::ReleaseTrigger(sensor);
       return trigger;
     }
   }
 
-  ESP_LOGW(TAG, "Unsupported trigger type: %s/%s", rule.trigger_type.c_str(), rule.trigger_condition.c_str());
-  ESP_LOGW(TAG, "Note: Only binary_sensor triggers are currently supported");
+  ESP_LOGW(TAG, "Unsupported trigger configuration");
+  ESP_LOGW(TAG, "Note: Only Input triggers with press/release are currently supported");
   return nullptr;
 }
 
