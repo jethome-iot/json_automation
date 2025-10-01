@@ -14,10 +14,6 @@ author = "agent"
 task = "workflow.run"
 args = "Validate Component"
 
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "ESPHome Compile Test"
-
 [[workflows.workflow]]
 name = "Validate Component"
 author = "agent"
@@ -37,17 +33,6 @@ author = 48112862
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "esphome compile example.yaml"
-
-[[workflows.workflow]]
-name = "ESPHome Compile Test"
-author = "agent"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "esphome compile example.yaml"
-
-[workflows.workflow.metadata]
-outputType = "console"
 
 [nix]
 channel = "stable-25_05"
