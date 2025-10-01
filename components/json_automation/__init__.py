@@ -68,7 +68,7 @@ async def to_code(config):
 )
 async def load_json_action_to_code(config, action_id, template_arg, args):
     paren = await cg.get_variable(config[CONF_ID])
-    var = cg.new_Pvariable(action_id, template_arg, paren)
+    var = cg.new_Pvariable(action_id, paren)
     template_ = await cg.templatable(config[CONF_JSON_DATA], args, cg.std_string)
     cg.add(var.set_json_data(template_))
     return var
@@ -85,7 +85,7 @@ async def load_json_action_to_code(config, action_id, template_arg, args):
 )
 async def save_json_action_to_code(config, action_id, template_arg, args):
     paren = await cg.get_variable(config[CONF_ID])
-    var = cg.new_Pvariable(action_id, template_arg, paren)
+    var = cg.new_Pvariable(action_id, paren)
     return var
 
 
@@ -101,7 +101,7 @@ async def save_json_action_to_code(config, action_id, template_arg, args):
 )
 async def execute_automation_action_to_code(config, action_id, template_arg, args):
     paren = await cg.get_variable(config[CONF_ID])
-    var = cg.new_Pvariable(action_id, template_arg, paren)
+    var = cg.new_Pvariable(action_id, paren)
     template_ = await cg.templatable(config["automation_id"], args, cg.std_string)
     cg.add(var.set_automation_id(template_))
     return var

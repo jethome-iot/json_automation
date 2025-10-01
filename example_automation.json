@@ -1,0 +1,103 @@
+{
+  "automations": [
+    {
+      "id": "morning_routine",
+      "trigger": {
+        "type": "time",
+        "condition": "on_time",
+        "parameters": {
+          "hour": "7",
+          "minute": "0"
+        }
+      },
+      "actions": [
+        "light.turn_on: bedroom_light",
+        {
+          "type": "delay",
+          "duration": "30s"
+        },
+        "switch.turn_on: coffee_maker"
+      ]
+    },
+    {
+      "id": "security_motion",
+      "trigger": {
+        "type": "binary_sensor",
+        "condition": "on_press",
+        "parameters": {
+          "sensor_id": "outdoor_motion"
+        }
+      },
+      "actions": [
+        "light.turn_on: outdoor_light",
+        "switch.turn_on: siren",
+        {
+          "type": "homeassistant.service",
+          "service": "notify.mobile_app",
+          "data": {
+            "message": "Motion detected outdoors!"
+          }
+        }
+      ]
+    },
+    {
+      "id": "temperature_control",
+      "trigger": {
+        "type": "sensor",
+        "condition": "on_value_range",
+        "parameters": {
+          "sensor_id": "living_room_temp",
+          "above": "26.0",
+          "below": "28.0"
+        }
+      },
+      "actions": [
+        "climate.set_temperature: living_room_ac",
+        {
+          "type": "climate.control",
+          "temperature": "24.0",
+          "mode": "cool"
+        }
+      ]
+    },
+    {
+      "id": "night_mode",
+      "trigger": {
+        "type": "time",
+        "condition": "on_time",
+        "parameters": {
+          "hour": "22",
+          "minute": "0"
+        }
+      },
+      "actions": [
+        "light.turn_off: all_lights",
+        "switch.turn_off: tv",
+        "switch.turn_on: night_light",
+        {
+          "type": "logger.log",
+          "message": "Night mode activated"
+        }
+      ]
+    },
+    {
+      "id": "humidity_control",
+      "trigger": {
+        "type": "sensor",
+        "condition": "on_value_range",
+        "parameters": {
+          "sensor_id": "bathroom_humidity",
+          "above": "70.0"
+        }
+      },
+      "actions": [
+        "switch.turn_on: bathroom_fan",
+        {
+          "type": "delay",
+          "duration": "10min"
+        },
+        "switch.turn_off: bathroom_fan"
+      ]
+    }
+  ]
+}

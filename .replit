@@ -1,2 +1,26 @@
+modules = ["python-3.11"]
 [agent]
 expertMode = true
+
+[workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Validate Component"
+
+[[workflows.workflow]]
+name = "Validate Component"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python validate_component.py"
+
+[workflows.workflow.metadata]
+outputType = "console"
