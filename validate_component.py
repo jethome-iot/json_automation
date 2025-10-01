@@ -9,6 +9,7 @@ import os
 import sys
 import json
 import re
+import subprocess
 
 def validate_python_file(filepath):
     """Validate Python configuration file exists and has basic structure"""
@@ -134,6 +135,38 @@ def validate_example_json(filepath):
         print(f"  ❌ Invalid JSON: {e}")
         return False
 
+def check_clang_format(filepath):
+    """Check if C++ file is properly formatted with clang-format"""
+    print(f"Checking clang-format: {filepath}")
+    
+    if not os.path.exists(filepath):
+        print(f"  ❌ File not found: {filepath}")
+        return False
+    
+    try:
+        result = subprocess.run(
+            ['clang-format', '--dry-run', '--Werror', filepath],
+            capture_output=True,
+            text=True
+        )
+        
+        if result.returncode == 0:
+            print(f"  ✅ File is properly formatted")
+            return True
+        else:
+            print(f"  ❌ File needs formatting")
+            if result.stderr:
+                print(f"     {result.stderr.strip()}")
+            print(f"     Run: clang-format -i {filepath}")
+            return False
+    
+    except FileNotFoundError:
+        print(f"  ⚠️  clang-format not found - skipping format check")
+        return True
+    except Exception as e:
+        print(f"  ⚠️  Error running clang-format: {e}")
+        return True
+
 def main():
     """Main validation function"""
     print("=" * 60)
@@ -150,6 +183,12 @@ def main():
     print()
     
     all_valid &= validate_cpp_implementation('components/json_automation/json_automation.cpp')
+    print()
+    
+    all_valid &= check_clang_format('components/json_automation/json_automation.h')
+    print()
+    
+    all_valid &= check_clang_format('components/json_automation/json_automation.cpp')
     print()
     
     all_valid &= validate_example_yaml('example.yaml')
