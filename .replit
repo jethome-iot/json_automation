@@ -12,18 +12,7 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "Validate Component"
-
-[[workflows.workflow]]
-name = "Validate Component"
-author = "agent"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "python validate_component.py"
-
-[workflows.workflow.metadata]
-outputType = "console"
+args = "Check Component"
 
 [[workflows.workflow]]
 name = "Check"
@@ -33,6 +22,17 @@ author = 48112862
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "esphome compile example.yaml"
+
+[[workflows.workflow]]
+name = "Check Component"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "esphome config example.yaml && python validate_component.py"
+
+[workflows.workflow.metadata]
+outputType = "console"
 
 [nix]
 channel = "stable-25_05"
