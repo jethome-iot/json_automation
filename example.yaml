@@ -38,7 +38,7 @@ binary_sensor:
   - platform: gpio
     pin: 15
     name: "Button"
-    id: button
+    id: my_button
 
 sensor:
   - platform: dht
@@ -136,7 +136,7 @@ button:
                     "type": "binary_sensor",
                     "condition": "on_press",
                     "parameters": {
-                      "object_id": "button"
+                      "object_id": "my_button"
                     }
                   },
                   "actions": [
