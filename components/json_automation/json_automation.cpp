@@ -1,6 +1,7 @@
 #include "json_automation.h"
 #include "esphome/core/log.h"
 #include "esphome/core/application.h"
+#include <algorithm>
 
 namespace esphome {
 namespace json_automation {
@@ -79,20 +80,41 @@ bool JsonAutomationComponent::save_json_to_preferences() {
   return false;
 }
 
-bool JsonAutomationComponent::validate_json_structure(JsonObject root) {
-  if (!root.containsKey("automations")) {
-    ESP_LOGE(TAG, "JSON missing 'automations' array");
-    this->trigger_json_error("Missing 'automations' array in JSON");
-    return false;
-  }
+TriggerSource JsonAutomationComponent::parse_trigger_source(const std::string &source) {
+  std::string lower = source;
+  std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+  
+  if (lower == "input") return TriggerSource::INPUT;
+  return TriggerSource::UNKNOWN;
+}
 
-  if (!root["automations"].is<JsonArray>()) {
-    ESP_LOGE(TAG, "'automations' is not an array");
-    this->trigger_json_error("'automations' must be an array");
-    return false;
-  }
+TriggerType JsonAutomationComponent::parse_trigger_type(const std::string &type) {
+  std::string lower = type;
+  std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+  
+  if (lower == "press") return TriggerType::PRESS;
+  if (lower == "release") return TriggerType::RELEASE;
+  return TriggerType::UNKNOWN;
+}
 
-  return true;
+ActionSource JsonAutomationComponent::parse_action_source(const std::string &source) {
+  std::string lower = source;
+  std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+  
+  if (lower == "switch") return ActionSource::SWITCH;
+  if (lower == "delay") return ActionSource::DELAY;
+  if (lower == "light") return ActionSource::LIGHT;
+  return ActionSource::UNKNOWN;
+}
+
+ActionType JsonAutomationComponent::parse_action_type(const std::string &type) {
+  std::string lower = type;
+  std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+  
+  if (lower == "turn_on") return ActionType::TURN_ON;
+  if (lower == "turn_off") return ActionType::TURN_OFF;
+  if (lower == "toggle") return ActionType::TOGGLE;
+  return ActionType::UNKNOWN;
 }
 
 bool JsonAutomationComponent::parse_json_automations(const std::string &json_data) {
@@ -107,57 +129,70 @@ bool JsonAutomationComponent::parse_json_automations(const std::string &json_dat
   this->automations_.clear();
 
   bool parse_success = json::parse_json(json_data, [this](JsonObject root) -> bool {
-    if (!this->validate_json_structure(root)) {
-      return false;
-    }
+    JsonArray automations_array = root.as<JsonArray>();
+    
+    if (!automations_array.isNull()) {
+      for (JsonVariant automation_var : automations_array) {
+        JsonObject automation_obj = automation_var.as<JsonObject>();
 
-    JsonArray automations = root["automations"];
-
-    for (JsonVariant automation_var : automations) {
-      JsonObject automation_obj = automation_var.as<JsonObject>();
-
-      if (!automation_obj.containsKey("id") ||
-          !automation_obj.containsKey("trigger") ||
-          !automation_obj.containsKey("actions")) {
-        ESP_LOGW(TAG, "Skipping invalid automation: missing required fields");
-        continue;
-      }
-
-      AutomationRule rule;
-      rule.id = automation_obj["id"].as<std::string>();
-
-      JsonObject trigger = automation_obj["trigger"];
-      rule.trigger_type = trigger["type"].as<std::string>();
-      rule.trigger_condition = trigger.containsKey("condition") ?
-                              trigger["condition"].as<std::string>() : "";
-
-      if (trigger.containsKey("parameters")) {
-        JsonObject params = trigger["parameters"];
-        for (JsonPair kv : params) {
-          rule.parameters[kv.key().c_str()] = kv.value().as<std::string>();
+        if (!automation_obj.containsKey("id") ||
+            !automation_obj.containsKey("trigger") ||
+            !automation_obj.containsKey("actions")) {
+          ESP_LOGW(TAG, "Skipping invalid automation: missing required fields");
+          continue;
         }
-      }
 
-      JsonArray actions = automation_obj["actions"];
-      for (JsonVariant action_var : actions) {
-        if (action_var.is<const char*>()) {
-          rule.actions.push_back(action_var.as<std::string>());
-        } else if (action_var.is<JsonObject>()) {
-          JsonObject action_obj = action_var.as<JsonObject>();
-          std::string action_str = json::build_json([&action_obj](JsonObject root) {
-            for (JsonPair kv : action_obj) {
-              root[kv.key()] = kv.value();
+        AutomationRule rule;
+        rule.id = automation_obj["id"].as<std::string>();
+        rule.name = automation_obj.containsKey("name") ? 
+                    automation_obj["name"].as<std::string>() : rule.id;
+        rule.enabled = automation_obj.containsKey("enabled") ? 
+                       automation_obj["enabled"].as<bool>() : true;
+
+        JsonObject trigger_obj = automation_obj["trigger"];
+        if (trigger_obj.containsKey("source")) {
+          rule.trigger.source = this->parse_trigger_source(trigger_obj["source"].as<std::string>());
+        }
+        if (trigger_obj.containsKey("type")) {
+          rule.trigger.type = this->parse_trigger_type(trigger_obj["type"].as<std::string>());
+        }
+        if (trigger_obj.containsKey("input_id")) {
+          rule.trigger.input_id = trigger_obj["input_id"].as<std::string>();
+        }
+
+        JsonArray actions = automation_obj["actions"];
+        for (JsonVariant action_var : actions) {
+          if (action_var.is<JsonObject>()) {
+            JsonObject action_obj = action_var.as<JsonObject>();
+            
+            Action action;
+            if (action_obj.containsKey("source")) {
+              action.source = this->parse_action_source(action_obj["source"].as<std::string>());
             }
-          });
-          rule.actions.push_back(action_str);
+            if (action_obj.containsKey("type")) {
+              action.type = this->parse_action_type(action_obj["type"].as<std::string>());
+            }
+            if (action_obj.containsKey("switch_id")) {
+              action.switch_id = action_obj["switch_id"].as<std::string>();
+            }
+            if (action_obj.containsKey("delay_s")) {
+              action.delay_s = action_obj["delay_s"].as<uint32_t>();
+            }
+            
+            rule.actions.push_back(action);
+          }
         }
+
+        this->automations_.push_back(rule);
+        ESP_LOGD(TAG, "Loaded automation: %s (%s)", rule.id.c_str(), rule.name.c_str());
       }
-
-      this->automations_.push_back(rule);
-      ESP_LOGD(TAG, "Loaded automation: %s", rule.id.c_str());
+      
+      return true;
     }
-
-    return true;
+    
+    ESP_LOGE(TAG, "JSON is not an array");
+    this->trigger_json_error("JSON must be an array of automations");
+    return false;
   });
 
   if (parse_success) {
