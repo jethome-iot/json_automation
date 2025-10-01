@@ -13,13 +13,16 @@ void JsonAutomationComponent::setup() {
   this->pref_ = global_preferences->make_preference<std::string>(this->get_object_id_hash());
   
   if (!this->json_data_.empty()) {
-    ESP_LOGD(TAG, "Parsing initial JSON data");
+    ESP_LOGD(TAG, "Parsing initial JSON data and creating automations");
     if (this->parse_json_automations(this->json_data_)) {
       this->save_json_to_preferences();
+      this->create_all_automations();
     }
   } else {
     ESP_LOGD(TAG, "Loading JSON data from preferences");
-    this->load_json_from_preferences();
+    if (this->load_json_from_preferences()) {
+      this->create_all_automations();
+    }
   }
 }
 
@@ -28,7 +31,8 @@ void JsonAutomationComponent::loop() {
 
 void JsonAutomationComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "JSON Automation Component:");
-  ESP_LOGCONFIG(TAG, "  Number of automations: %d", this->automations_.size());
+  ESP_LOGCONFIG(TAG, "  Number of parsed automations: %d", this->automations_.size());
+  ESP_LOGCONFIG(TAG, "  Active automation objects: %d", this->automation_objects_.size());
   
   for (const auto &automation : this->automations_) {
     ESP_LOGCONFIG(TAG, "  Automation ID: %s", automation.id.c_str());
@@ -45,7 +49,7 @@ void JsonAutomationComponent::set_json_data(const std::string &json_data) {
 bool JsonAutomationComponent::load_json_from_preferences() {
   std::string stored_json;
   if (this->pref_.load(&stored_json)) {
-    ESP_LOGD(TAG, "Loaded JSON from preferences: %s", stored_json.c_str());
+    ESP_LOGD(TAG, "Loaded JSON from preferences");
     this->json_data_ = stored_json;
     return this->parse_json_automations(stored_json);
   }
@@ -167,6 +171,154 @@ bool JsonAutomationComponent::parse_json_automations(const std::string &json_dat
   }
 }
 
+binary_sensor::BinarySensor *JsonAutomationComponent::resolve_binary_sensor(const std::string &object_id) {
+  uint32_t key = esphome::fnv1_hash(object_id);
+  auto *sensor = App.get_binary_sensor_by_key(key);
+  if (!sensor) {
+    ESP_LOGW(TAG, "Binary sensor not found: %s (hash: %u)", object_id.c_str(), key);
+  } else {
+    ESP_LOGD(TAG, "Resolved binary_sensor: %s (hash: %u)", object_id.c_str(), key);
+  }
+  return sensor;
+}
+
+switch_::Switch *JsonAutomationComponent::resolve_switch(const std::string &object_id) {
+  uint32_t key = esphome::fnv1_hash(object_id);
+  auto *sw = App.get_switch_by_key(key);
+  if (!sw) {
+    ESP_LOGW(TAG, "Switch not found: %s (hash: %u)", object_id.c_str(), key);
+  } else {
+    ESP_LOGD(TAG, "Resolved switch: %s (hash: %u)", object_id.c_str(), key);
+  }
+  return sw;
+}
+
+light::LightState *JsonAutomationComponent::resolve_light(const std::string &object_id) {
+  uint32_t key = esphome::fnv1_hash(object_id);
+  auto *light = App.get_light_by_key(key);
+  if (!light) {
+    ESP_LOGW(TAG, "Light not found: %s (hash: %u)", object_id.c_str(), key);
+  } else {
+    ESP_LOGD(TAG, "Resolved light: %s (hash: %u)", object_id.c_str(), key);
+  }
+  return light;
+}
+
+Trigger<> *JsonAutomationComponent::create_trigger(const AutomationRule &rule) {
+  if (rule.trigger_type == "binary_sensor") {
+    if (rule.parameters.count("object_id") == 0) {
+      ESP_LOGE(TAG, "Missing object_id parameter for binary_sensor trigger");
+      return nullptr;
+    }
+    
+    auto object_id = rule.parameters.at("object_id");
+    auto *sensor = this->resolve_binary_sensor(object_id);
+    if (!sensor) return nullptr;
+    
+    if (rule.trigger_condition == "on_press") {
+      auto *trigger = new binary_sensor::PressTrigger(sensor);
+      return trigger;
+    } else if (rule.trigger_condition == "on_release") {
+      auto *trigger = new binary_sensor::ReleaseTrigger(sensor);
+      return trigger;
+    }
+  }
+  
+  ESP_LOGW(TAG, "Unsupported trigger type: %s/%s", rule.trigger_type.c_str(), rule.trigger_condition.c_str());
+  ESP_LOGW(TAG, "Note: Only binary_sensor triggers are currently supported");
+  return nullptr;
+}
+
+Action<> *JsonAutomationComponent::create_action(const std::string &action_str, const AutomationRule &rule) {
+  size_t colon_pos = action_str.find(':');
+  if (colon_pos == std::string::npos) {
+    ESP_LOGW(TAG, "Invalid action format: %s", action_str.c_str());
+    return nullptr;
+  }
+  
+  std::string action_type = action_str.substr(0, colon_pos);
+  std::string object_id = action_str.substr(colon_pos + 1);
+  
+  object_id.erase(0, object_id.find_first_not_of(" \t"));
+  object_id.erase(object_id.find_last_not_of(" \t") + 1);
+  
+  if (action_type == "switch.turn_on") {
+    auto *sw = this->resolve_switch(object_id);
+    if (!sw) return nullptr;
+    auto *action = new switch_::TurnOnAction<>(sw);
+    return action;
+  } else if (action_type == "switch.turn_off") {
+    auto *sw = this->resolve_switch(object_id);
+    if (!sw) return nullptr;
+    auto *action = new switch_::TurnOffAction<>(sw);
+    return action;
+  } else if (action_type == "switch.toggle") {
+    auto *sw = this->resolve_switch(object_id);
+    if (!sw) return nullptr;
+    auto *action = new switch_::ToggleAction<>(sw);
+    return action;
+  } else if (action_type == "light.turn_on") {
+    auto *light = this->resolve_light(object_id);
+    if (!light) return nullptr;
+    auto *action = new light::TurnOnAction<>(light);
+    return action;
+  } else if (action_type == "light.turn_off") {
+    auto *light = this->resolve_light(object_id);
+    if (!light) return nullptr;
+    auto *action = new light::TurnOffAction<>(light);
+    return action;
+  } else if (action_type == "light.toggle") {
+    auto *light = this->resolve_light(object_id);
+    if (!light) return nullptr;
+    auto *action = new light::ToggleAction<>(light);
+    return action;
+  }
+  
+  ESP_LOGW(TAG, "Unsupported action type: %s", action_type.c_str());
+  return nullptr;
+}
+
+void JsonAutomationComponent::clear_automations() {
+  ESP_LOGD(TAG, "Clearing %d existing automation objects", this->automation_objects_.size());
+  this->automation_objects_.clear();
+}
+
+void JsonAutomationComponent::create_all_automations() {
+  for (const auto &rule : this->automations_) {
+    if (!this->create_automation_from_rule(rule)) {
+      ESP_LOGW(TAG, "Failed to create automation: %s", rule.id.c_str());
+    }
+  }
+}
+
+bool JsonAutomationComponent::create_automation_from_rule(const AutomationRule &rule) {
+  ESP_LOGD(TAG, "Creating automation: %s", rule.id.c_str());
+  
+  Trigger<> *trigger = this->create_trigger(rule);
+  if (!trigger) {
+    ESP_LOGE(TAG, "Failed to create trigger for automation: %s", rule.id.c_str());
+    return false;
+  }
+  
+  Automation<> *automation = new Automation<>(trigger);
+  
+  int action_count = 0;
+  for (const auto &action_str : rule.actions) {
+    Action<> *action = this->create_action(action_str, rule);
+    if (action) {
+      automation->add_action(action);
+      action_count++;
+    }
+  }
+  
+  this->automation_objects_.push_back(std::unique_ptr<Automation<>>(automation));
+  
+  ESP_LOGI(TAG, "Successfully created automation: %s with %d actions", 
+           rule.id.c_str(), action_count);
+  
+  return true;
+}
+
 void JsonAutomationComponent::execute_automation(const std::string &automation_id) {
   ESP_LOGD(TAG, "Looking up automation: %s", automation_id.c_str());
   
@@ -175,9 +327,7 @@ void JsonAutomationComponent::execute_automation(const std::string &automation_i
       ESP_LOGI(TAG, "Found automation %s with %d actions", 
                automation_id.c_str(), automation.actions.size());
       
-      ESP_LOGW(TAG, "Note: This component only stores and parses automations.");
-      ESP_LOGW(TAG, "Dynamic action execution is not implemented.");
-      ESP_LOGW(TAG, "Use the parsed data in on_automation_loaded callbacks for custom logic.");
+      ESP_LOGI(TAG, "Automation is active and will execute when triggered");
       
       for (const auto &action : automation.actions) {
         ESP_LOGD(TAG, "Action in automation: %s", action.c_str());

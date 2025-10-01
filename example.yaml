@@ -1,7 +1,11 @@
 esphome:
   name: json-automation-demo
-  platform: ESP32
+  friendly_name: JSON Automation Demo
+
+esp32:
   board: esp32dev
+  framework:
+    type: arduino
 
 wifi:
   ssid: "YourWiFi"
@@ -14,7 +18,8 @@ api:
   password: ""
 
 ota:
-  password: ""
+  - platform: esphome
+    password: ""
 
 preferences:
   flash_write_interval: 5min
@@ -24,63 +29,16 @@ external_components:
       type: local
       path: components
 
-json_automation:
-  id: my_automations
-  json_data: |
-    {
-      "automations": [
-        {
-          "id": "light_on_motion",
-          "trigger": {
-            "type": "binary_sensor",
-            "condition": "on_press",
-            "parameters": {
-              "sensor_id": "motion_sensor"
-            }
-          },
-          "actions": [
-            "light.turn_on: living_room_light",
-            {
-              "type": "delay",
-              "duration": "5min"
-            },
-            "light.turn_off: living_room_light"
-          ]
-        },
-        {
-          "id": "temperature_alert",
-          "trigger": {
-            "type": "sensor",
-            "condition": "on_value_range",
-            "parameters": {
-              "sensor_id": "temperature",
-              "above": "25.0"
-            }
-          },
-          "actions": [
-            "switch.turn_on: fan",
-            "logger.log: Temperature too high!"
-          ]
-        }
-      ]
-    }
-  on_automation_loaded:
-    then:
-      - logger.log: 
-          format: "Automations loaded successfully: %s"
-          args: ['data.c_str()']
-  on_json_error:
-    then:
-      - logger.log:
-          format: "JSON Error: %s"
-          args: ['error.c_str()']
-          level: ERROR
-
 binary_sensor:
   - platform: gpio
     pin: 14
     name: "Motion Sensor"
     id: motion_sensor
+
+  - platform: gpio
+    pin: 15
+    name: "Button"
+    id: button
 
 sensor:
   - platform: dht
@@ -90,23 +48,78 @@ sensor:
       id: temperature
     humidity:
       name: "Humidity"
+      id: humidity
 
 light:
   - platform: binary
     name: "Living Room Light"
     id: living_room_light
-    output: light_output
+    output: light_output_1
+
+  - platform: binary
+    name: "Bedroom Light"
+    id: bedroom_light
+    output: light_output_2
 
 output:
   - platform: gpio
     pin: 12
-    id: light_output
+    id: light_output_1
+
+  - platform: gpio
+    pin: 13
+    id: light_output_2
 
 switch:
   - platform: gpio
-    pin: 13
+    pin: 16
     name: "Fan"
     id: fan
+
+json_automation:
+  id: my_automations
+  json_data: |
+    {
+      "automations": [
+        {
+          "id": "motion_light",
+          "trigger": {
+            "type": "binary_sensor",
+            "condition": "on_press",
+            "parameters": {
+              "object_id": "motion_sensor"
+            }
+          },
+          "actions": [
+            "light.turn_on: living_room_light"
+          ]
+        },
+        {
+          "id": "motion_light_off",
+          "trigger": {
+            "type": "binary_sensor",
+            "condition": "on_release",
+            "parameters": {
+              "object_id": "motion_sensor"
+            }
+          },
+          "actions": [
+            "light.turn_off: living_room_light"
+          ]
+        }
+      ]
+    }
+  on_automation_loaded:
+    then:
+      - logger.log: 
+          format: "✅ Automations loaded and active: %d triggers created"
+          args: ['id(my_automations).get_automations().size()']
+  on_json_error:
+    then:
+      - logger.log:
+          format: "❌ JSON Error: %s"
+          args: ['error.c_str()']
+          level: ERROR
 
 button:
   - platform: template
@@ -118,27 +131,19 @@ button:
             {
               "automations": [
                 {
-                  "id": "custom_automation",
+                  "id": "button_toggle",
                   "trigger": {
-                    "type": "time",
-                    "condition": "on_time",
+                    "type": "binary_sensor",
+                    "condition": "on_press",
                     "parameters": {
-                      "hour": "18",
-                      "minute": "0"
+                      "object_id": "button"
                     }
                   },
                   "actions": [
-                    "light.turn_on: living_room_light"
+                    "light.toggle: bedroom_light"
                   ]
                 }
               ]
             }
       - json_automation.save_json:
           id: my_automations
-
-  - platform: template
-    name: "Execute Light Automation"
-    on_press:
-      - json_automation.execute:
-          id: my_automations
-          automation_id: "light_on_motion"

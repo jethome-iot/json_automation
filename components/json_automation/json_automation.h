@@ -3,9 +3,18 @@
 #include "esphome/core/component.h"
 #include "esphome/core/automation.h"
 #include "esphome/core/preferences.h"
+#include "esphome/core/application.h"
+#include "esphome/core/helpers.h"
 #include "esphome/components/json/json_util.h"
+#include "esphome/components/binary_sensor/binary_sensor.h"
+#include "esphome/components/binary_sensor/automation.h"
+#include "esphome/components/switch/switch.h"
+#include "esphome/components/switch/automation.h"
+#include "esphome/components/light/light_state.h"
+#include "esphome/components/light/automation.h"
 #include <map>
 #include <vector>
+#include <memory>
 
 namespace esphome {
 namespace json_automation {
@@ -25,7 +34,7 @@ class JsonAutomationComponent : public Component {
   void setup() override;
   void loop() override;
   void dump_config() override;
-  float get_setup_priority() const override { return setup_priority::DATA; }
+  float get_setup_priority() const override { return setup_priority::LATE; }
 
   void set_json_data(const std::string &json_data);
   bool load_json_from_preferences();
@@ -47,10 +56,22 @@ class JsonAutomationComponent : public Component {
   CallbackManager<void(std::string)> automation_loaded_callback_;
   CallbackManager<void(std::string)> json_error_callback_;
   
+  std::vector<std::unique_ptr<Automation<>>> automation_objects_;
+  
   void trigger_automation_loaded(const std::string &data);
   void trigger_json_error(const std::string &error);
   
   bool validate_json_structure(JsonObject root);
+  bool create_automation_from_rule(const AutomationRule &rule);
+  void clear_automations();
+  void create_all_automations();
+  
+  binary_sensor::BinarySensor *resolve_binary_sensor(const std::string &object_id);
+  switch_::Switch *resolve_switch(const std::string &object_id);
+  light::LightState *resolve_light(const std::string &object_id);
+  
+  Trigger<> *create_trigger(const AutomationRule &rule);
+  Action<> *create_action(const std::string &action_str, const AutomationRule &rule);
 };
 
 class AutomationLoadedTrigger : public Trigger<std::string> {
@@ -79,8 +100,14 @@ template<typename... Ts> class LoadJsonAction : public Action<Ts...> {
   
   void play(Ts... x) override {
     auto json_data = this->json_data_.value(x...);
+    this->parent_->clear_automations();
     this->parent_->set_json_data(json_data);
-    this->parent_->parse_json_automations(json_data);
+    if (this->parent_->parse_json_automations(json_data)) {
+      auto automations = this->parent_->get_automations();
+      for (const auto &rule : automations) {
+        this->parent_->create_automation_from_rule(rule);
+      }
+    }
   }
   
  protected:
