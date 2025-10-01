@@ -1,56 +1,79 @@
-{
-  "automations": [
-    {
-      "id": "motion_light_on",
-      "trigger": {
-        "type": "binary_sensor",
-        "condition": "on_press",
-        "parameters": {
-          "object_id": "motion_sensor"
-        }
-      },
-      "actions": [
-        "light.turn_on: living_room_light"
-      ]
+[
+  {
+    "id": "auto1",
+    "name": "Inp1-react",
+    "enabled": true,
+    "trigger": {
+      "source": "Input",
+      "type": "press",
+      "input_id": "input_1"
     },
-    {
-      "id": "motion_light_off",
-      "trigger": {
-        "type": "binary_sensor",
-        "condition": "on_release",
-        "parameters": {
-          "object_id": "motion_sensor"
-        }
+    "actions": [
+      {
+        "source": "switch",
+        "type": "turn_on",
+        "switch_id": "relay_1"
       },
-      "actions": [
-        "light.turn_off: living_room_light"
-      ]
+      {
+        "source": "delay",
+        "delay_s": 5
+      },
+      {
+        "source": "Switch",
+        "type": "turn_off",
+        "switch_id": "relay_1"
+      }
+    ]
+  },
+  {
+    "id": "motion_light_on",
+    "name": "Motion Light On",
+    "enabled": true,
+    "trigger": {
+      "source": "Input",
+      "type": "press",
+      "input_id": "motion_sensor"
     },
-    {
-      "id": "button_toggle",
-      "trigger": {
-        "type": "binary_sensor",
-        "condition": "on_press",
-        "parameters": {
-          "object_id": "my_button"
-        }
-      },
-      "actions": [
-        "light.toggle: bedroom_light"
-      ]
+    "actions": [
+      {
+        "source": "light",
+        "type": "turn_on",
+        "switch_id": "living_room_light"
+      }
+    ]
+  },
+  {
+    "id": "motion_light_off",
+    "name": "Motion Light Off",
+    "enabled": true,
+    "trigger": {
+      "source": "Input",
+      "type": "release",
+      "input_id": "motion_sensor"
     },
-    {
-      "id": "button_fan_control",
-      "trigger": {
-        "type": "binary_sensor",
-        "condition": "on_press",
-        "parameters": {
-          "object_id": "my_button"
-        }
-      },
-      "actions": [
-        "switch.toggle: fan"
-      ]
-    }
-  ]
-}
+    "actions": [
+      {
+        "source": "light",
+        "type": "turn_off",
+        "switch_id": "living_room_light"
+      }
+    ]
+  },
+  {
+    "id": "button_toggle",
+    "name": "Button Toggle Light",
+    "enabled": true,
+    "trigger": {
+      "source": "Input",
+      "type": "press",
+      "input_id": "my_button"
+    },
+    "actions": [
+      {
+        "source": "light",
+        "type": "toggle",
+        "switch_id": "bedroom_light"
+      }
+    ]
+  }
+]

@@ -113,22 +113,27 @@ def validate_example_json(filepath):
         with open(filepath, 'r') as f:
             data = json.load(f)
         
-        if 'automations' not in data:
-            print(f"  ❌ Missing 'automations' key")
+        # Support both old format (wrapped) and new format (direct array)
+        if isinstance(data, list):
+            automations = data
+        elif isinstance(data, dict) and 'automations' in data:
+            automations = data['automations']
+        else:
+            print(f"  ❌ JSON must be an array or object with 'automations' key")
             return False
         
-        if not isinstance(data['automations'], list):
-            print(f"  ❌ 'automations' must be an array")
+        if not isinstance(automations, list):
+            print(f"  ❌ Automations must be an array")
             return False
         
-        for i, automation in enumerate(data['automations']):
+        for i, automation in enumerate(automations):
             required_fields = ['id', 'trigger', 'actions']
             for field in required_fields:
                 if field not in automation:
                     print(f"  ❌ Automation {i} missing field: {field}")
                     return False
         
-        print(f"  ✅ Example JSON structure is valid ({len(data['automations'])} automations)")
+        print(f"  ✅ Example JSON structure is valid ({len(automations)} automations)")
         return True
     
     except json.JSONDecodeError as e:

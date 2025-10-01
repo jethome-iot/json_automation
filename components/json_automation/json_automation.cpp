@@ -2,6 +2,7 @@
 #include "esphome/core/log.h"
 #include "esphome/core/application.h"
 #include <algorithm>
+#include <cstring>
 
 namespace esphome {
 namespace json_automation {
@@ -11,7 +12,7 @@ static const char *const TAG = "json_automation";
 void JsonAutomationComponent::setup() {
   ESP_LOGCONFIG(TAG, "Setting up JSON Automation Component...");
 
-  this->pref_ = global_preferences->make_preference<char[2048]>(fnv1_hash(std::string("json_automation")));
+  this->pref_ = global_preferences->make_preference<char[MAX_JSON_SIZE]>(fnv1_hash(std::string("json_automation")));
 
   if (!this->json_data_.empty()) {
     ESP_LOGD(TAG, "Parsing initial JSON data and creating automations");
@@ -27,8 +28,7 @@ void JsonAutomationComponent::setup() {
   }
 }
 
-void JsonAutomationComponent::loop() {
-}
+void JsonAutomationComponent::loop() {}
 
 void JsonAutomationComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "JSON Automation Component:");
@@ -43,14 +43,13 @@ void JsonAutomationComponent::dump_config() {
   }
 }
 
-void JsonAutomationComponent::set_json_data(const std::string &json_data) {
-  this->json_data_ = json_data;
-}
+void JsonAutomationComponent::set_json_data(const std::string &json_data) { this->json_data_ = json_data; }
 
 bool JsonAutomationComponent::load_json_from_preferences() {
-  std::string stored_json;
-  if (this->pref_.load(&stored_json)) {
-    ESP_LOGD(TAG, "Loaded JSON from preferences");
+  char buffer[MAX_JSON_SIZE];
+  if (this->pref_.load(&buffer)) {
+    std::string stored_json(buffer);
+    ESP_LOGD(TAG, "Loaded JSON from preferences (%d bytes)", stored_json.size());
     this->json_data_ = stored_json;
     return this->parse_json_automations(stored_json);
   }
@@ -64,14 +63,18 @@ bool JsonAutomationComponent::save_json_to_preferences() {
     return false;
   }
 
-  if (this->json_data_.size() > MAX_JSON_SIZE) {
-    ESP_LOGE(TAG, "Cannot save: JSON data too large: %d bytes (max: %d)",
-             this->json_data_.size(), MAX_JSON_SIZE);
+  if (this->json_data_.size() >= MAX_JSON_SIZE) {
+    ESP_LOGE(TAG, "Cannot save: JSON data too large: %d bytes (max: %d)", this->json_data_.size(), MAX_JSON_SIZE - 1);
     this->trigger_json_error("JSON data exceeds maximum size for saving");
     return false;
   }
 
-  if (this->pref_.save(&this->json_data_)) {
+  char buffer[MAX_JSON_SIZE];
+  memset(buffer, 0, MAX_JSON_SIZE);
+  strncpy(buffer, this->json_data_.c_str(), MAX_JSON_SIZE - 1);
+  buffer[MAX_JSON_SIZE - 1] = '\0';
+
+  if (this->pref_.save(&buffer)) {
     ESP_LOGD(TAG, "JSON data saved to preferences (%d bytes)", this->json_data_.size());
     return true;
   }
@@ -83,37 +86,46 @@ bool JsonAutomationComponent::save_json_to_preferences() {
 TriggerSource JsonAutomationComponent::parse_trigger_source(const std::string &source) {
   std::string lower = source;
   std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-  
-  if (lower == "input") return TriggerSource::INPUT;
+
+  if (lower == "input")
+    return TriggerSource::INPUT;
   return TriggerSource::UNKNOWN;
 }
 
 TriggerType JsonAutomationComponent::parse_trigger_type(const std::string &type) {
   std::string lower = type;
   std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-  
-  if (lower == "press") return TriggerType::PRESS;
-  if (lower == "release") return TriggerType::RELEASE;
+
+  if (lower == "press")
+    return TriggerType::PRESS;
+  if (lower == "release")
+    return TriggerType::RELEASE;
   return TriggerType::UNKNOWN;
 }
 
 ActionSource JsonAutomationComponent::parse_action_source(const std::string &source) {
   std::string lower = source;
   std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-  
-  if (lower == "switch") return ActionSource::SWITCH;
-  if (lower == "delay") return ActionSource::DELAY;
-  if (lower == "light") return ActionSource::LIGHT;
+
+  if (lower == "switch")
+    return ActionSource::SWITCH;
+  if (lower == "delay")
+    return ActionSource::DELAY;
+  if (lower == "light")
+    return ActionSource::LIGHT;
   return ActionSource::UNKNOWN;
 }
 
 ActionType JsonAutomationComponent::parse_action_type(const std::string &type) {
   std::string lower = type;
   std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-  
-  if (lower == "turn_on") return ActionType::TURN_ON;
-  if (lower == "turn_off") return ActionType::TURN_OFF;
-  if (lower == "toggle") return ActionType::TOGGLE;
+
+  if (lower == "turn_on")
+    return ActionType::TURN_ON;
+  if (lower == "turn_off")
+    return ActionType::TURN_OFF;
+  if (lower == "toggle")
+    return ActionType::TOGGLE;
   return ActionType::UNKNOWN;
 }
 
@@ -130,13 +142,12 @@ bool JsonAutomationComponent::parse_json_automations(const std::string &json_dat
 
   bool parse_success = json::parse_json(json_data, [this](JsonObject root) -> bool {
     JsonArray automations_array = root.as<JsonArray>();
-    
+
     if (!automations_array.isNull()) {
       for (JsonVariant automation_var : automations_array) {
         JsonObject automation_obj = automation_var.as<JsonObject>();
 
-        if (!automation_obj.containsKey("id") ||
-            !automation_obj.containsKey("trigger") ||
+        if (!automation_obj.containsKey("id") || !automation_obj.containsKey("trigger") ||
             !automation_obj.containsKey("actions")) {
           ESP_LOGW(TAG, "Skipping invalid automation: missing required fields");
           continue;
@@ -144,10 +155,8 @@ bool JsonAutomationComponent::parse_json_automations(const std::string &json_dat
 
         AutomationRule rule;
         rule.id = automation_obj["id"].as<std::string>();
-        rule.name = automation_obj.containsKey("name") ? 
-                    automation_obj["name"].as<std::string>() : rule.id;
-        rule.enabled = automation_obj.containsKey("enabled") ? 
-                       automation_obj["enabled"].as<bool>() : true;
+        rule.name = automation_obj.containsKey("name") ? automation_obj["name"].as<std::string>() : rule.id;
+        rule.enabled = automation_obj.containsKey("enabled") ? automation_obj["enabled"].as<bool>() : true;
 
         JsonObject trigger_obj = automation_obj["trigger"];
         if (trigger_obj.containsKey("source")) {
@@ -160,11 +169,19 @@ bool JsonAutomationComponent::parse_json_automations(const std::string &json_dat
           rule.trigger.input_id = trigger_obj["input_id"].as<std::string>();
         }
 
+        // Validate trigger fields
+        if (rule.trigger.source == TriggerSource::UNKNOWN || rule.trigger.type == TriggerType::UNKNOWN ||
+            rule.trigger.input_id.empty()) {
+          ESP_LOGW(TAG, "Skipping automation %s: invalid or missing trigger fields", rule.id.c_str());
+          continue;
+        }
+
         JsonArray actions = automation_obj["actions"];
+        int valid_action_count = 0;
         for (JsonVariant action_var : actions) {
           if (action_var.is<JsonObject>()) {
             JsonObject action_obj = action_var.as<JsonObject>();
-            
+
             Action action;
             if (action_obj.containsKey("source")) {
               action.source = this->parse_action_source(action_obj["source"].as<std::string>());
@@ -178,18 +195,38 @@ bool JsonAutomationComponent::parse_json_automations(const std::string &json_dat
             if (action_obj.containsKey("delay_s")) {
               action.delay_s = action_obj["delay_s"].as<uint32_t>();
             }
-            
-            rule.actions.push_back(action);
+
+            // Validate action fields
+            bool valid_action = false;
+            if (action.source == ActionSource::DELAY && action.delay_s > 0) {
+              valid_action = true;
+            } else if ((action.source == ActionSource::SWITCH || action.source == ActionSource::LIGHT) &&
+                       action.type != ActionType::UNKNOWN && !action.switch_id.empty()) {
+              valid_action = true;
+            }
+
+            if (valid_action) {
+              rule.actions.push_back(action);
+              valid_action_count++;
+            } else {
+              ESP_LOGW(TAG, "Skipping invalid action in automation %s", rule.id.c_str());
+            }
           }
         }
 
-        this->automations_.push_back(rule);
-        ESP_LOGD(TAG, "Loaded automation: %s (%s)", rule.id.c_str(), rule.name.c_str());
+        // Only add automation if it has at least one valid action
+        if (valid_action_count > 0) {
+          this->automations_.push_back(rule);
+          ESP_LOGD(TAG, "Loaded automation: %s (%s) with %d valid actions", rule.id.c_str(), rule.name.c_str(),
+                   valid_action_count);
+        } else {
+          ESP_LOGW(TAG, "Skipping automation %s: no valid actions", rule.id.c_str());
+        }
       }
-      
+
       return true;
     }
-    
+
     ESP_LOGE(TAG, "JSON is not an array");
     this->trigger_json_error("JSON must be an array of automations");
     return false;
@@ -247,7 +284,8 @@ Trigger<> *JsonAutomationComponent::create_trigger(const AutomationRule &rule) {
     }
 
     auto *sensor = this->resolve_binary_sensor(rule.trigger.input_id);
-    if (!sensor) return nullptr;
+    if (!sensor)
+      return nullptr;
 
     if (rule.trigger.type == TriggerType::PRESS) {
       auto *trigger = new binary_sensor::PressTrigger(sensor);
@@ -271,7 +309,8 @@ esphome::Action<> *JsonAutomationComponent::create_action(const Action &action) 
     }
 
     auto *sw = this->resolve_switch(action.switch_id);
-    if (!sw) return nullptr;
+    if (!sw)
+      return nullptr;
 
     if (action.type == ActionType::TURN_ON) {
       return new switch_::TurnOnAction<>(sw);
@@ -287,7 +326,8 @@ esphome::Action<> *JsonAutomationComponent::create_action(const Action &action) 
     }
 
     auto *light = this->resolve_light(action.switch_id);
-    if (!light) return nullptr;
+    if (!light)
+      return nullptr;
 
     if (action.type == ActionType::TURN_ON) {
       auto *light_action = new light::LightControlAction<>(light);
@@ -350,8 +390,7 @@ bool JsonAutomationComponent::create_automation_from_rule(const AutomationRule &
 
   this->automation_objects_.push_back(std::unique_ptr<Automation<>>(automation));
 
-  ESP_LOGI(TAG, "Successfully created automation: %s with %d actions",
-           rule.id.c_str(), action_count);
+  ESP_LOGI(TAG, "Successfully created automation: %s with %d actions", rule.id.c_str(), action_count);
 
   return true;
 }
@@ -361,8 +400,8 @@ void JsonAutomationComponent::execute_automation(const std::string &automation_i
 
   for (const auto &automation : this->automations_) {
     if (automation.id == automation_id) {
-      ESP_LOGI(TAG, "Found automation %s (%s) with %d actions",
-               automation_id.c_str(), automation.name.c_str(), automation.actions.size());
+      ESP_LOGI(TAG, "Found automation %s (%s) with %d actions", automation_id.c_str(), automation.name.c_str(),
+               automation.actions.size());
 
       ESP_LOGI(TAG, "Automation is active and will execute when triggered");
       ESP_LOGI(TAG, "Enabled: %s", automation.enabled ? "YES" : "NO");
@@ -386,9 +425,7 @@ void JsonAutomationComponent::trigger_automation_loaded(const std::string &data)
   this->automation_loaded_callback_.call(data);
 }
 
-void JsonAutomationComponent::trigger_json_error(const std::string &error) {
-  this->json_error_callback_.call(error);
-}
+void JsonAutomationComponent::trigger_json_error(const std::string &error) { this->json_error_callback_.call(error); }
 
 }  // namespace json_automation
 }  // namespace esphome

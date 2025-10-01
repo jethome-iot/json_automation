@@ -79,36 +79,42 @@ switch:
 json_automation:
   id: my_automations
   json_data: |
-    {
-      "automations": [
-        {
-          "id": "motion_light",
-          "trigger": {
-            "type": "binary_sensor",
-            "condition": "on_press",
-            "parameters": {
-              "object_id": "motion_sensor"
-            }
-          },
-          "actions": [
-            "light.turn_on: living_room_light"
-          ]
+    [
+      {
+        "id": "motion_light",
+        "name": "Motion Light On",
+        "enabled": true,
+        "trigger": {
+          "source": "Input",
+          "type": "press",
+          "input_id": "motion_sensor"
         },
-        {
-          "id": "motion_light_off",
-          "trigger": {
-            "type": "binary_sensor",
-            "condition": "on_release",
-            "parameters": {
-              "object_id": "motion_sensor"
-            }
-          },
-          "actions": [
-            "light.turn_off: living_room_light"
-          ]
-        }
-      ]
-    }
+        "actions": [
+          {
+            "source": "light",
+            "type": "turn_on",
+            "switch_id": "living_room_light"
+          }
+        ]
+      },
+      {
+        "id": "motion_light_off",
+        "name": "Motion Light Off",
+        "enabled": true,
+        "trigger": {
+          "source": "Input",
+          "type": "release",
+          "input_id": "motion_sensor"
+        },
+        "actions": [
+          {
+            "source": "light",
+            "type": "turn_off",
+            "switch_id": "living_room_light"
+          }
+        ]
+      }
+    ]
   on_automation_loaded:
     then:
       - logger.log: 
@@ -128,22 +134,24 @@ button:
       - json_automation.load_json:
           id: my_automations
           json_data: |
-            {
-              "automations": [
-                {
-                  "id": "button_toggle",
-                  "trigger": {
-                    "type": "binary_sensor",
-                    "condition": "on_press",
-                    "parameters": {
-                      "object_id": "my_button"
-                    }
-                  },
-                  "actions": [
-                    "light.toggle: bedroom_light"
-                  ]
-                }
-              ]
-            }
+            [
+              {
+                "id": "button_toggle",
+                "name": "Button Toggle Light",
+                "enabled": true,
+                "trigger": {
+                  "source": "Input",
+                  "type": "press",
+                  "input_id": "my_button"
+                },
+                "actions": [
+                  {
+                    "source": "light",
+                    "type": "toggle",
+                    "switch_id": "bedroom_light"
+                  }
+                ]
+              }
+            ]
       - json_automation.save_json:
           id: my_automations
