@@ -24,3 +24,12 @@ args = "python validate_component.py"
 
 [workflows.workflow.metadata]
 outputType = "console"
+
+[[workflows.workflow]]
+name = "Check"
+mode = "sequential"
+author = 48112862
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "esphome compile example.yaml"
