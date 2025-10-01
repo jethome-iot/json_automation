@@ -21,12 +21,54 @@ namespace json_automation {
 
 static const size_t MAX_JSON_SIZE = 4096;
 
+enum class TriggerSource {
+  INPUT,
+  UNKNOWN
+};
+
+enum class TriggerType {
+  PRESS,
+  RELEASE,
+  UNKNOWN
+};
+
+enum class ActionSource {
+  SWITCH,
+  DELAY,
+  LIGHT,
+  UNKNOWN
+};
+
+enum class ActionType {
+  TURN_ON,
+  TURN_OFF,
+  TOGGLE,
+  UNKNOWN
+};
+
+struct Trigger {
+  TriggerSource source;
+  TriggerType type;
+  std::string input_id;
+};
+
+struct Action {
+  ActionSource source;
+  ActionType type;
+  std::string switch_id;
+  uint32_t delay_s;
+  
+  Action() : source(ActionSource::UNKNOWN), type(ActionType::UNKNOWN), delay_s(0) {}
+};
+
 struct AutomationRule {
   std::string id;
-  std::string trigger_type;
-  std::string trigger_condition;
-  std::vector<std::string> actions;
-  std::map<std::string, std::string> parameters;
+  std::string name;
+  bool enabled;
+  Trigger trigger;
+  std::vector<Action> actions;
+  
+  AutomationRule() : enabled(true) {}
 };
 
 class JsonAutomationComponent : public Component {
@@ -61,7 +103,6 @@ class JsonAutomationComponent : public Component {
   void trigger_automation_loaded(const std::string &data);
   void trigger_json_error(const std::string &error);
   
-  bool validate_json_structure(JsonObject root);
   bool create_automation_from_rule(const AutomationRule &rule);
   void clear_automations();
   void create_all_automations();
@@ -71,7 +112,12 @@ class JsonAutomationComponent : public Component {
   light::LightState *resolve_light(const std::string &object_id);
   
   Trigger<> *create_trigger(const AutomationRule &rule);
-  Action<> *create_action(const std::string &action_str, const AutomationRule &rule);
+  esphome::Action<> *create_action(const Action &action);
+  
+  TriggerSource parse_trigger_source(const std::string &source);
+  TriggerType parse_trigger_type(const std::string &type);
+  ActionSource parse_action_source(const std::string &source);
+  ActionType parse_action_type(const std::string &type);
 };
 
 class AutomationLoadedTrigger : public Trigger<std::string> {
